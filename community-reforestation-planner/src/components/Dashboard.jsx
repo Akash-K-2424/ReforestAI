@@ -25,6 +25,10 @@ import { useTheme } from '../contexts/ThemeContext';
 import MapComponent from './MapComponent';
 import ImpactCard from './ImpactCard';
 import ZoneCard from './ZoneCard';
+import AnalysisPanel from './AnalysisPanel';
+import LocationHistory from './LocationHistory';
+import BatchAnalysis from './BatchAnalysis';
+import LocationComparison from './LocationComparison';
 
 const Dashboard = () => {
   const { isDark, toggleTheme } = useTheme();
@@ -32,6 +36,8 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState(null);
+  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
   const [impactData, setImpactData] = useState({
     carbonSequestration: 0,
     airQualityImprovement: 0,
@@ -89,6 +95,7 @@ const Dashboard = () => {
 
   const tabs = [
     { id: 'planting-zones', label: '🌳 Planting Zones', icon: TreePine },
+    { id: 'batch-analysis', label: '📦 Batch Analysis', icon: BarChart3 },
     { id: 'impact-data', label: '📊 Impact Data', icon: BarChart3 },
     { id: 'contributions', label: '🧭 My Contributions', icon: Users },
     { id: 'settings', label: '⚙️ Settings', icon: Settings }
@@ -96,18 +103,81 @@ const Dashboard = () => {
 
   const handleLocationSelect = (location) => {
     setSelectedLocation(location);
-    // Simulate impact calculation
-    setImpactData({
-      carbonSequestration: Math.floor(Math.random() * 50) + 20,
-      airQualityImprovement: Math.floor(Math.random() * 30) + 15,
-      floodRiskReduction: Math.floor(Math.random() * 40) + 25,
-      groundwaterRecharge: Math.floor(Math.random() * 35) + 20
-    });
+    
+    // Save to history
+    if (location && location.features) {
+      const historyItem = {
+        ...location,
+        id: `${location.query || location.name}-${Date.now()}`,
+        timestamp: new Date().toISOString()
+      };
+      
+      try {
+        const existing = localStorage.getItem('locationHistory');
+        const history = existing ? JSON.parse(existing) : [];
+        // Remove duplicate if exists (same query)
+        const filtered = history.filter(h => h.query !== location.query);
+        // Add to beginning
+        const updated = [historyItem, ...filtered].slice(0, 50); // Keep last 50
+        localStorage.setItem('locationHistory', JSON.stringify(updated));
+      } catch (error) {
+        console.error('Failed to save to history:', error);
+      }
+    }
+    
+    // Calculate impact metrics based on priority and features
+    if (location.features && location.priorityDetails) {
+      const { features, priorityDetails } = location;
+      
+      // Higher priority (Green) areas get better impact estimates
+      const priorityMultiplier = location.priority === 'Green' ? 1.5 : location.priority === 'Yellow' ? 1.0 : 0.6;
+      
+      // Use NDVI and other features to estimate impacts
+      const ndviFactor = features.ndvi || 0.5;
+      const vegetationFactor = features.vegetation_density || 0;
+      
+      setImpactData({
+        carbonSequestration: Math.floor((50 - vegetationFactor) * priorityMultiplier * ndviFactor) + 15,
+        airQualityImprovement: Math.floor((30 - vegetationFactor * 0.3) * priorityMultiplier) + 10,
+        floodRiskReduction: Math.floor((features.ndwi || 0.3) * 100 * priorityMultiplier) + 15,
+        groundwaterRecharge: Math.floor((features.soil_moisture || 0.3) * 100 * priorityMultiplier) + 15
+      });
+    } else {
+      // Fallback for mock locations
+      setImpactData({
+        carbonSequestration: Math.floor(Math.random() * 50) + 20,
+        airQualityImprovement: Math.floor(Math.random() * 30) + 15,
+        floodRiskReduction: Math.floor(Math.random() * 40) + 25,
+        groundwaterRecharge: Math.floor(Math.random() * 35) + 20
+      });
+    }
   };
 
   const handleLogout = () => {
     localStorage.removeItem('authToken');
     window.location.href = '/';
+  };
+
+  // Helper functions for data freshness
+  const isDataFresh = (dateString) => {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    const now = new Date();
+    const daysDiff = (now - date) / (1000 * 60 * 60 * 24);
+    return daysDiff <= 7; // Consider data fresh if less than 7 days old
+  };
+
+  const formatDataDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    const now = new Date();
+    const daysDiff = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+    
+    if (daysDiff === 0) return 'Today';
+    if (daysDiff === 1) return 'Yesterday';
+    if (daysDiff < 7) return `${daysDiff} days ago`;
+    if (daysDiff < 30) return `${Math.floor(daysDiff / 7)} weeks ago`;
+    return date.toLocaleDateString();
   };
 
   return (
@@ -218,16 +288,34 @@ const Dashboard = () => {
                         <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
                           Interactive Map
                         </h3>
-                        <button className="flex items-center space-x-2 px-4 py-2 bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-200 dark:hover:bg-primary-800 transition-colors">
-                          <Filter className="w-4 h-4" />
-                          <span>Filters</span>
-                        </button>
+                        <div className="flex items-center space-x-2">
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => setActiveTab('batch-analysis')}
+                              className="flex items-center space-x-2 px-4 py-2 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+                            >
+                              <span>Batch Analysis</span>
+                            </button>
+                            <button
+                              onClick={() => setShowComparison(true)}
+                              className="flex items-center space-x-2 px-4 py-2 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors"
+                            >
+                              <span>Compare Locations</span>
+                            </button>
+                          </div>
+                          <button className="flex items-center space-x-2 px-4 py-2 bg-primary-100 dark:bg-primary-900 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-200 dark:hover:bg-primary-800 transition-colors">
+                            <Filter className="w-4 h-4" />
+                            <span>Filters</span>
+                          </button>
+                        </div>
                       </div>
-                      <MapComponent onLocationSelect={handleLocationSelect} />
+                      <div className="relative h-full" style={{ height: 'calc(100% - 4rem)' }}>
+                        <MapComponent onLocationSelect={handleLocationSelect} />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Impact Cards */}
+                  {/* Impact Cards & Analysis Details */}
                   <div className="space-y-4">
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                       Environmental Impact
@@ -262,6 +350,89 @@ const Dashboard = () => {
                         trend="+6%"
                       />
                     </div>
+                    
+                    {/* Analysis Details */}
+                    {selectedLocation && selectedLocation.features && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-4 p-4 bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-200 dark:border-gray-700"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+                            Satellite Analysis: {selectedLocation.name}
+                          </h4>
+                          <button
+                            onClick={() => setShowAnalysisPanel(true)}
+                            className="text-xs px-3 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center space-x-1"
+                          >
+                            <BarChart3 className="w-3 h-3" />
+                            <span>View Details</span>
+                          </button>
+                        </div>
+                        
+                        {/* Data Freshness Indicator */}
+                        {selectedLocation.features.collection_date && (
+                          <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center space-x-2 text-xs">
+                              <div className={`w-2 h-2 rounded-full ${
+                                isDataFresh(selectedLocation.features.collection_date) 
+                                  ? 'bg-green-500 animate-pulse' 
+                                  : 'bg-yellow-500'
+                              }`}></div>
+                              <span className="text-gray-600 dark:text-gray-400">
+                                Data from: <span className="font-semibold text-gray-900 dark:text-white">
+                                  {formatDataDate(selectedLocation.features.collection_date)}
+                                </span>
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">Priority:</span>
+                            <span className={`ml-2 font-semibold capitalize ${
+                              selectedLocation.priorityColor === 'green' ? 'text-green-600' :
+                              selectedLocation.priorityColor === 'yellow' ? 'text-yellow-600' :
+                              'text-red-600'
+                            }`}>
+                              {selectedLocation.priorityLevel} ({selectedLocation.priority})
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">Score:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">
+                              {selectedLocation.score}/100
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">NDVI:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">
+                              {selectedLocation.features.ndvi.toFixed(3)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">NDWI:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">
+                              {selectedLocation.features.ndwi.toFixed(3)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">Vegetation:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">
+                              {selectedLocation.features.vegetation_density?.toFixed(1) || 'N/A'}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600 dark:text-gray-400">Soil Moisture:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">
+                              {selectedLocation.features.soil_moisture?.toFixed(3) || 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
                 </div>
 
@@ -281,6 +452,26 @@ const Dashboard = () => {
                       <ZoneCard key={zone.id} zone={zone} rank={index + 1} />
                     ))}
                   </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'batch-analysis' && (
+              <motion.div
+                key="batch-analysis"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
+              >
+                <div className="card">
+                  <BatchAnalysis
+                    onResultsReady={(results) => {
+                      // Handle batch results - could add markers to map or display in list
+                      console.log('Batch analysis complete:', results);
+                    }}
+                  />
                 </div>
               </motion.div>
             )}
@@ -360,6 +551,19 @@ const Dashboard = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* Location History */}
+                <div className="card">
+                  <LocationHistory
+                    onSelectLocation={(location) => {
+                      handleLocationSelect(location);
+                      setActiveTab('planting-zones');
+                    }}
+                    onDeleteLocation={(locationId) => {
+                      console.log('Deleted location:', locationId);
+                    }}
+                  />
+                </div>
               </motion.div>
             )}
 
@@ -409,6 +613,29 @@ const Dashboard = () => {
           </AnimatePresence>
         </main>
       </div>
+
+      {/* Analysis Panel Modal */}
+      <AnimatePresence>
+        {showAnalysisPanel && selectedLocation && (
+          <AnalysisPanel
+            location={selectedLocation}
+            onClose={() => setShowAnalysisPanel(false)}
+            onExport={(location) => {
+              // TODO: Implement export functionality
+              console.log('Exporting location data:', location);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Comparison Modal */}
+      <AnimatePresence>
+        {showComparison && (
+          <LocationComparison
+            onClose={() => setShowComparison(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };
